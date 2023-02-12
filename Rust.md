@@ -35,7 +35,7 @@ variable = 5; // works
 
 - Integers: `i8 i16 i32 i64 i128`. Default: `i32`.
 - Unsigned integers: `u8 u16 u32 u64 u128`. Default: No default.
-- Variable size integer: `usize`. `i32` on 32 bit machines, `i64` on 64 bit machines.
+- Variable size integer: `usize isize`. `u32 i32` on 32 bit machines, `u64 i64` on 64 bit machines.
 - Floats: `f32 f64`. Default: `f64`.
 - Boolean: `bool`, can be `true` or `false`.
 - Chars `char`.
@@ -790,6 +790,40 @@ fn print_me<T: Debug>(item: &T) { // <- limit T to have to implement the Debug t
 }
 ```
 
+And sometimes we may want to refer to a type only by a type constraint. I didn't fully get this, yet. So here's just an example:
+
+```rust
+pub trait Area {
+    fn area(&self) -> f32;
+}
+
+#[derive(Debug)]
+pub struct Circle {
+    radius: f32,
+}
+
+#[derive(Debug)]
+pub struct Square {
+    length: f32,
+}
+
+impl Area for Circle {
+    fn area(&self) -> f32 {
+        self.radius * self.radius * 3.14159
+    }
+}
+
+impl Area for Square {
+    fn area(&self) -> f32 {
+        self.length * self.length
+    }
+}
+
+pub struct GeometricFormsList {
+    forms: Ve<Box<dyn Area>>,
+}
+```
+
 ### Traits
 
 Traits are like interfaces.
@@ -837,6 +871,22 @@ fn main() {
         content: String::from("Go learn Rust!");
     }
     notify(fb_post);
+}
+```
+
+And you can have super traits. That's a trait that lists a bunch of other traits that all have to be implemented.
+
+```rust
+pub trait Area {
+    fn area(&self) -> f32;
+}
+
+pub trait Circumference {
+    fn circumference(&self) -> f32;
+}
+
+pub train GeoProperties: Area + Circumference {
+    // optionally add more functions
 }
 ```
 
@@ -1025,3 +1075,140 @@ pub mod my_mod{
 ```
 
 There are specific conventions how you organized a library made up of many files. Tricks with specific filenames and stuff. Too complicated to get into here. Look it up.
+
+### Threading
+
+Rust is awesome with mulitthreading. Let's see why.
+
+Let's write a simple multi-threaded program:
+
+```rust
+use std::{thread, time::Duration};
+
+fn main() {
+    let handle = thread::spawn(|| {
+        for i in 1..10 {
+            println!("{}", i);
+
+            thread::sleep(Duration::from_millis(100));
+        }
+
+        thread::sleep(Duration::from_millis(2000));
+    });
+
+    handle.join().unwrap();
+
+    for i in 1..10 {
+        println!("{}", i);
+
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    let vec = vec![1, 2, 3];
+
+    let handle2 = thread::spawn(|| {
+        for i in vec {
+            println!("{}", i);
+
+            thread::sleep(Duration::from_millis(100));
+        }
+
+        thread::sleep(Duration::from_millis(2000));
+    });
+
+    handle.join().unwrap();
+
+    println!("{:?}", vec); // <- Error: vec has been moved to thread!
+}
+```
+
+So far, so good. What if you have to communicate with the thread while it's running?
+
+#### Channels
+
+use std::sync::mpsc;
+use std::thread;
+
+```rust
+use std::sync::mpsc;
+use std::thread;
+
+fn main() {
+    // two transmitters, one receiver
+     let (transmitter, receiver) = mpsc::channel();
+     let transmitter2 = transmitter.clone();
+
+     thread::spawn(move || {
+        let msg = String::from("My name is ");
+        transmitter.send(msg).unwrap();
+     });
+
+     thread::spawn(move || {
+        let msg = String::from("Matthias ");
+        transmitter2.send(msg).unwrap();
+     });
+
+     let received_msg1 = receiver.recv().unwrap();
+     let received_msg2 = receiver.recv().unwrap();
+
+     println!("Received: {}{}", received_msg1, received_msg2);
+}
+```
+
+When you `recv` a value, the program will actually wait until one is available. If none arrives, because nobody can send a message anymore, this will panic!
+
+If you want to receive a value only if one is _already_ availabe, use `try_recv`.
+
+Now, what if your threads manipulate data. Multiple threads mutating the same data. You have to make sure this does not happen. Introducing: Arc and Mutex (atomic reference cound and mutual exclusion).
+
+```rust
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+fn main() {
+    let counter = Arc::new(Mutex::new(0));
+
+    let mut handles = vec![];
+
+    for _ in 0..10 {
+        let counter = Arc::clone(&counter); // <- needed to use counter in each thread
+        let handle = thread::spawn(move || {
+            let mut counter = counter.lock().unwrap();
+
+            *counter += 1;
+        });
+
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    println!("Counter: {}", counter.lock().unwrap());
+}
+
+## Tooling
+
+### `cargo test`
+
+Runs all tests defined across your project. Naming of your test functions is important! `cargo test test_integration_` will only run test functions that start with "test_integration_".
+
+### `cargo check`
+
+Tests whether `cargo build` _would_ succeed.
+
+### `cargo doc`
+
+Generates documentation. Documetation comments start with `///`.
+
+```rust
+/// This function prints out the input values
+/// 
+/// ```rust
+/// print_out("hoho".to_string());
+/// ```
+pub fn print_out(in: &str) {
+    println!("{}", in);
+}
+```
